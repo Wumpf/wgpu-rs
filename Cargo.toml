@@ -25,18 +25,24 @@ vulkan = ["wgn/vulkan-portability"]
 
 [dependencies.wgn]
 package = "wgpu-native"
-version = "0.5"
+#version = "0.5"
 #git = "https://github.com/gfx-rs/wgpu"
+git = "https://github.com/Wumpf/wgpu"
+rev = "fix-binding-readonly-conversion"
 
 [dependencies.wgc]
 package = "wgpu-core"
-version = "0.5"
+#version = "0.5"
 #git = "https://github.com/gfx-rs/wgpu"
+git = "https://github.com/Wumpf/wgpu"
+rev = "fix-binding-readonly-conversion"
 
 [dependencies.wgt]
 package = "wgpu-types"
-version = "0.5"
+#version = "0.5"
 #git = "https://github.com/gfx-rs/wgpu"
+git = "https://github.com/Wumpf/wgpu"
+rev = "fix-binding-readonly-conversion"
 
 [dependencies]
 arrayvec = "0.5"
