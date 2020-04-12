@@ -13,7 +13,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             power_preference: wgpu::PowerPreference::Default,
             compatible_surface: Some(&surface),
         },
-        wgpu::BackendBit::PRIMARY,
+        wgpu::BackendBit::DX12,
     )
     .await
     .unwrap();
@@ -35,18 +35,21 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&fs[..])).unwrap());
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        bindings: &[],
-        label: None,
-    });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: &bind_group_layout,
-        bindings: &[],
+        bindings: &[ wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStage::VERTEX,
+            ty: wgpu::BindingType::StorageTexture {
+                dimension: wgpu::TextureViewDimension::D3,
+                component_type: wgpu::TextureComponentType::Uint,
+                format: wgpu::TextureFormat::R32Uint,
+                readonly: true,
+             }
+        }],
         label: None,
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         bind_group_layouts: &[&bind_group_layout],
     });
-
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         layout: &pipeline_layout,
         vertex_stage: wgpu::ProgrammableStageDescriptor {
@@ -80,7 +83,11 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         sample_mask: !0,
         alpha_to_coverage_enabled: false,
     });
-
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &bind_group_layout,
+        bindings: &[],
+        label: None,
+    });
     let mut sc_desc = wgpu::SwapChainDescriptor {
         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
         format: wgpu::TextureFormat::Bgra8UnormSrgb,
