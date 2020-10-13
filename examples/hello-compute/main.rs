@@ -85,26 +85,89 @@ async fn execute_gpu(numbers: Vec<u32>) -> Vec<u32> {
     // Here we specifiy the layout of the bind group.
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,                             // The location
-            visibility: wgpu::ShaderStage::COMPUTE, // Which shader type in the pipeline this buffer is available to.
-            ty: wgpu::BindingType::StorageBuffer {
-                dynamic: false,
-                readonly: false, // Specifies if the buffer can only be read within the shader
-                min_binding_size: wgpu::BufferSize::new(4),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,                             // The location
+                visibility: wgpu::ShaderStage::COMPUTE, // Which shader type in the pipeline this buffer is available to.
+                ty: wgpu::BindingType::StorageBuffer {
+                    dynamic: false,
+                    readonly: false, // Specifies if the buffer can only be read within the shader
+                    min_binding_size: wgpu::BufferSize::new(4),
+                },
+                count: None,
             },
-            count: None,
-        }],
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStage::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture {
+                    dimension: wgpu::TextureViewDimension::D2,
+                    format: wgpu::TextureFormat::R32Float,
+                    readonly: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStage::COMPUTE,
+                ty: wgpu::BindingType::SampledTexture {
+                    dimension: wgpu::TextureViewDimension::D2,
+                    component_type: wgpu::TextureComponentType::Float,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let sampled_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("dummy"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R32Float,
+        usage: wgpu::TextureUsage::SAMPLED,
+    });
+    let image_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("dummy"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R32Float,
+        usage: wgpu::TextureUsage::STORAGE,
     });
 
     // Instantiates the bind group, once again specifying the binding of buffers.
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: storage_buffer.as_entire_binding(),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: storage_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(
+                    &image_texture.create_view(&Default::default()),
+                ),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(
+                    &sampled_texture.create_view(&Default::default()),
+                ),
+            },
+        ],
     });
 
     // A pipeline specifices the operation of a shader
