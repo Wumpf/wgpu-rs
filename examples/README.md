@@ -17,8 +17,8 @@ All framework-based examples render to the window.
 | lines and points          |        |        |        | :star:    |        |        |                |        |
 | dynamic buffer offsets    |        |        |        |           | :star: |        |                |        |
 | implicit layout           |        |        | :star: |           |        |        |                |        |
-| sampled color textures    | :star: | :star: | :star: |           |        | :star: | :star:         | :star: |
-| storage textures          | :star: |        |        |           |        |        |                |        |
+| sampled color textures    |        | :star: | :star: |           |        | :star: | :star:         | :star: |
+| storage textures          |        |        |        |           |        |        |                |        |
 | binding array             |        |        |        |           |        |        | :star:         |        |
 | comparison samplers       |        |        |        |           | :star: |        |                |        |
 | subresource views         |        |        | :star: |           | :star: |        |                |        |
