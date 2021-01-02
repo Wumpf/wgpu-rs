@@ -4,48 +4,189 @@ mod framework;
 use std::iter;
 
 struct BindGroups {
-    bind_group_render_result: wgpu::BindGroup,
+    advect: wgpu::BindGroup,
+    compute_divergence: wgpu::BindGroup,
+    solve_pressure: [wgpu::BindGroup; 2],
+    remove_divergence: wgpu::BindGroup,
+    render_result: wgpu::BindGroup,
 }
 
 struct Example {
     pipeline_render_result: wgpu::RenderPipeline,
+    bind_group_layout_write_velocity: wgpu::BindGroupLayout,
+    bind_group_layout_write_scalar: wgpu::BindGroupLayout,
     bind_group_layout_render_result: wgpu::BindGroupLayout,
-    textures: BindGroups,
+    bind_groups: BindGroups,
 }
 
+const VELOCITY_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Float;
+const SCALAR_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+
 impl BindGroups {
+    fn create_bind_group_write_velocity(
+        label: &'static str,
+        device: &wgpu::Device,
+        bind_group_layout_write_velocity: &wgpu::BindGroupLayout,
+        source_2d: &wgpu::TextureView,
+        source_scalar: &wgpu::TextureView,
+        dest_2d: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: bind_group_layout_write_velocity,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&source_2d),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&source_scalar),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&dest_2d),
+                },
+            ],
+        })
+    }
+
+    fn create_bind_group_write_scalar(
+        label: &'static str,
+        device: &wgpu::Device,
+        bind_group_layout_write_scalar: &wgpu::BindGroupLayout,
+        source_2d: &wgpu::TextureView,
+        source_scalar0: &wgpu::TextureView,
+        source_scalar1: &wgpu::TextureView,
+        dest_scalar: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: bind_group_layout_write_scalar,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&source_2d),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&source_scalar0),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&source_scalar1),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&dest_scalar),
+                },
+            ],
+        })
+    }
+
     fn new(
         device: &wgpu::Device,
         width: u32,
         height: u32,
+        bind_group_layout_write_velocity: &wgpu::BindGroupLayout,
+        bind_group_layout_write_scalar: &wgpu::BindGroupLayout,
         bind_group_layout_render_result: &wgpu::BindGroupLayout,
     ) -> Self {
-        let velocity_field = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Velocity Field"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rg32Float,
-            usage: wgpu::TextureUsage::STORAGE | wgpu::TextureUsage::SAMPLED,
-        });
-        let velocity_field_view = velocity_field.create_view(&Default::default());
+        let create_storage_texture = |label, format| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsage::STORAGE,
+                })
+                .create_view(&Default::default())
+        };
 
-        let bind_group_render_result = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let velocity_view = create_storage_texture("Velocity", VELOCITY_TEXTURE_FORMAT);
+        let intermediary_velocity_view =
+            create_storage_texture("Intermediary Velocity", VELOCITY_TEXTURE_FORMAT);
+        let divergence_view = create_storage_texture("Divergence", SCALAR_TEXTURE_FORMAT);
+        let pressure0_view = create_storage_texture("Pressure 0", SCALAR_TEXTURE_FORMAT);
+        let pressure1_view = create_storage_texture("Pressure 1", SCALAR_TEXTURE_FORMAT);
+
+        let advect = Self::create_bind_group_write_velocity(
+            "BindGroup advect",
+            device,
+            bind_group_layout_write_velocity,
+            &velocity_view,
+            &divergence_view, // Dummy, not used
+            &intermediary_velocity_view,
+        );
+        let compute_divergence = Self::create_bind_group_write_scalar(
+            "BindGroup advect",
+            device,
+            bind_group_layout_write_scalar,
+            &intermediary_velocity_view,
+            &pressure0_view, // Dummy, unused
+            &pressure1_view, // Dummy, unused
+            &divergence_view,
+        );
+        let solve_pressure = [
+            Self::create_bind_group_write_scalar(
+                "BindGroup pressure solve p0->p1",
+                device,
+                bind_group_layout_write_scalar,
+                &intermediary_velocity_view, // Dummy, unused
+                &divergence_view,
+                &pressure0_view,
+                &pressure1_view,
+            ),
+            Self::create_bind_group_write_scalar(
+                "BindGroup pressure solve p1->p0",
+                device,
+                bind_group_layout_write_scalar,
+                &intermediary_velocity_view, // Dummy, unused
+                &divergence_view,
+                &pressure1_view,
+                &pressure0_view,
+            ),
+        ];
+        let remove_divergence = Self::create_bind_group_write_scalar(
+            "BindGroup advect",
+            device,
+            bind_group_layout_write_scalar,
+            &intermediary_velocity_view,
+            &pressure0_view, // Dummy, unused
+            &pressure1_view, // Dummy, unused
+            &divergence_view,
+        );
+        let remove_divergence = Self::create_bind_group_write_velocity(
+            "BindGroup remove divergence",
+            device,
+            bind_group_layout_write_velocity,
+            &intermediary_velocity_view,
+            &pressure0_view,
+            &velocity_view,
+        );
+
+        let render_result = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("BindGroup render result"),
             layout: bind_group_layout_render_result,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&velocity_field_view),
+                resource: wgpu::BindingResource::TextureView(&velocity_view),
             }],
         });
 
         BindGroups {
-            bind_group_render_result,
+            advect,
+            compute_divergence,
+            solve_pressure,
+            remove_divergence,
+            render_result,
         }
     }
 }
@@ -56,17 +197,91 @@ impl framework::Example for Example {
         device: &wgpu::Device,
         _queue: &wgpu::Queue,
     ) -> Self {
+        let binding_read_velocity = wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::ReadOnly,
+            format: VELOCITY_TEXTURE_FORMAT,
+            view_dimension: wgpu::TextureViewDimension::D2,
+        };
+        let binding_write_velocity = wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format: VELOCITY_TEXTURE_FORMAT,
+            view_dimension: wgpu::TextureViewDimension::D2,
+        };
+        let binding_read_scalar = wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::ReadOnly,
+            format: SCALAR_TEXTURE_FORMAT,
+            view_dimension: wgpu::TextureViewDimension::D2,
+        };
+        let binding_write_scalar = wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format: SCALAR_TEXTURE_FORMAT,
+            view_dimension: wgpu::TextureViewDimension::D2,
+        };
+
+        // Bind group for reading scalar and a velocity texture and writing another one.
+        let bind_group_layout_write_velocity =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("BindGroupLayout write velocity"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: binding_read_velocity,
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: binding_read_scalar,
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: binding_write_velocity,
+                        count: None,
+                    },
+                ],
+            });
+        // Bind group for reading two scalar textures writing to a scalar texture.
+        let bind_group_layout_write_scalar =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("BindGroupLayout compute divergence"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: binding_read_velocity,
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: binding_read_scalar,
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: binding_read_scalar,
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: binding_write_scalar,
+                        count: None,
+                    },
+                ],
+            });
+        // Bind group for rendering the results - reads velocity texture.
         let bind_group_layout_render_result =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("BindGroupLayout render result"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
+                    ty: binding_read_velocity,
                     count: None,
                 }],
             });
@@ -109,17 +324,21 @@ impl framework::Example for Example {
             })
         };
 
-        let textures = BindGroups::new(
+        let bind_groups = BindGroups::new(
             device,
             sc_desc.width,
             sc_desc.height,
+            &bind_group_layout_write_velocity,
+            &bind_group_layout_write_scalar,
             &bind_group_layout_render_result,
         );
 
         Example {
             pipeline_render_result,
+            bind_group_layout_write_velocity,
+            bind_group_layout_write_scalar,
             bind_group_layout_render_result,
-            textures,
+            bind_groups,
         }
     }
 
@@ -145,10 +364,12 @@ impl framework::Example for Example {
         device: &wgpu::Device,
         _queue: &wgpu::Queue,
     ) {
-        self.textures = BindGroups::new(
+        self.bind_groups = BindGroups::new(
             device,
             sc_desc.width,
             sc_desc.height,
+            &self.bind_group_layout_write_velocity,
+            &self.bind_group_layout_write_scalar,
             &self.bind_group_layout_render_result,
         );
     }
@@ -177,7 +398,7 @@ impl framework::Example for Example {
             });
 
             rpass.set_pipeline(&self.pipeline_render_result);
-            rpass.set_bind_group(0, &self.textures.bind_group_render_result, &[]);
+            rpass.set_bind_group(0, &self.bind_groups.render_result, &[]);
             rpass.draw(0..3, 0..1);
         }
 
