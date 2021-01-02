@@ -12,10 +12,16 @@ struct BindGroups {
 }
 
 struct Example {
+    pipeline_advect: wgpu::ComputePipeline,
+    pipeline_compute_divergence: wgpu::ComputePipeline,
+    pipeline_solve_pressure: wgpu::ComputePipeline,
+    pipeline_remove_divergence: wgpu::ComputePipeline,
     pipeline_render_result: wgpu::RenderPipeline,
+
     bind_group_layout_write_velocity: wgpu::BindGroupLayout,
     bind_group_layout_write_scalar: wgpu::BindGroupLayout,
     bind_group_layout_render_result: wgpu::BindGroupLayout,
+
     bind_groups: BindGroups,
 }
 
@@ -286,9 +292,72 @@ impl framework::Example for Example {
                 }],
             });
 
+        let pipeline_layout_write_velocity =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&bind_group_layout_write_velocity],
+                push_constant_ranges: &[],
+            });
+        let pipeline_layout_write_scalar =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&bind_group_layout_write_scalar],
+                push_constant_ranges: &[],
+            });
+
+        let pipeline_advect = {
+            let module = device.create_shader_module(&wgpu::include_spirv!("advect.comp.spv"));
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Pipeline advect"),
+                layout: Some(&pipeline_layout_write_velocity),
+                compute_stage: wgpu::ProgrammableStageDescriptor {
+                    module: &module,
+                    entry_point: "main",
+                },
+            })
+        };
+        let pipeline_compute_divergence = {
+            let module =
+                device.create_shader_module(&wgpu::include_spirv!("compute_divergence.comp.spv"));
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Pipeline compute divergence"),
+                layout: Some(&pipeline_layout_write_scalar),
+                compute_stage: wgpu::ProgrammableStageDescriptor {
+                    module: &module,
+                    entry_point: "main",
+                },
+            })
+        };
+        let pipeline_solve_pressure = {
+            let module =
+                device.create_shader_module(&wgpu::include_spirv!("solve_pressure.comp.spv"));
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Pipeline solve pressure"),
+                layout: Some(&pipeline_layout_write_scalar),
+                compute_stage: wgpu::ProgrammableStageDescriptor {
+                    module: &module,
+                    entry_point: "main",
+                },
+            })
+        };
+        let pipeline_remove_divergence = {
+            let module =
+                device.create_shader_module(&wgpu::include_spirv!("remove_divergence.comp.spv"));
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Pipeline remove pressure"),
+                layout: Some(&pipeline_layout_write_scalar),
+                compute_stage: wgpu::ProgrammableStageDescriptor {
+                    module: &module,
+                    entry_point: "main",
+                },
+            })
+        };
+
         let pipeline_render_result = {
-            let vs_module = device.create_shader_module(&wgpu::include_spirv!("shader.vert.spv"));
-            let fs_module = device.create_shader_module(&wgpu::include_spirv!("shader.frag.spv"));
+            let vs_module =
+                device.create_shader_module(&wgpu::include_spirv!("render_result.vert.spv"));
+            let fs_module =
+                device.create_shader_module(&wgpu::include_spirv!("render_result.frag.spv"));
 
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: None,
@@ -334,6 +403,10 @@ impl framework::Example for Example {
         );
 
         Example {
+            pipeline_advect,
+            pipeline_compute_divergence,
+            pipeline_solve_pressure,
+            pipeline_remove_divergence,
             pipeline_render_result,
             bind_group_layout_write_velocity,
             bind_group_layout_write_scalar,
@@ -384,22 +457,34 @@ impl framework::Example for Example {
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("render result to screen via screen filling triangle"),
-                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &frame.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: true,
-                    },
-                }],
-                depth_stencil_attachment: None,
-            });
+            {
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("simulation step"),
+                });
 
-            rpass.set_pipeline(&self.pipeline_render_result);
-            rpass.set_bind_group(0, &self.bind_groups.render_result, &[]);
-            rpass.draw(0..3, 0..1);
+                cpass.set_pipeline(&self.pipeline_advect);
+                cpass.set_pipeline(&self.pipeline_compute_divergence);
+                cpass.set_pipeline(&self.pipeline_solve_pressure);
+                cpass.set_pipeline(&self.pipeline_remove_divergence);
+            }
+            {
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("render result to screen via screen filling triangle"),
+                    color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                        attachment: &frame.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: true,
+                        },
+                    }],
+                    depth_stencil_attachment: None,
+                });
+
+                rpass.set_pipeline(&self.pipeline_render_result);
+                rpass.set_bind_group(0, &self.bind_groups.render_result, &[]);
+                rpass.draw(0..3, 0..1);
+            }
         }
 
         queue.submit(iter::once(encoder.finish()));
